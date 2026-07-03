@@ -1,0 +1,90 @@
+{
+  "diagrams": [
+    {
+      "id": "chapter1_logic",
+      "title": "需求理解逻辑图",
+      "chapter": "chapter1",
+      "layout": "TB",
+      "theme_key": "chapter1",
+      "legend": ["开始", "调研", "判断", "约束", "结论"],
+      "nodes": [
+        { "id": "n1", "label": "业务背景输入", "kind": "start" },
+        { "id": "n2", "label": "现状调研与数据核验", "kind": "process" },
+        { "id": "n3", "label": "痛点识别", "kind": "process" },
+        { "id": "n4", "label": "是否存在关键瓶颈", "kind": "decision" },
+        { "id": "n5", "label": "风险与约束清单", "kind": "data" },
+        { "id": "n6", "label": "需求分层结论", "kind": "quality" },
+        { "id": "n7", "label": "需求理解输出", "kind": "end" }
+      ],
+      "groups": [
+        { "id": "input_group", "title": "输入分析", "node_ids": ["n1", "n2", "n3"] },
+        { "id": "output_group", "title": "判断输出", "node_ids": ["n4", "n5", "n6", "n7"] }
+      ],
+      "edges": [
+        { "from": "n1", "to": "n2" },
+        { "from": "n2", "to": "n3" },
+        { "from": "n3", "to": "n4" },
+        { "from": "n4", "to": "n5", "label": "是" },
+        { "from": "n4", "to": "n6", "label": "否" },
+        { "from": "n5", "to": "n6" },
+        { "from": "n6", "to": "n7" }
+      ]
+    },
+    {
+      "id": "chapter2_logic",
+      "title": "实施策略逻辑图",
+      "chapter": "chapter2",
+      "layout": "LR",
+      "theme_key": "chapter2",
+      "legend": ["目标", "策略", "资源", "评审", "定稿"],
+      "nodes": [
+        { "id": "m1", "label": "目标拆解", "kind": "start" },
+        { "id": "m2", "label": "策略分层设计", "kind": "process" },
+        { "id": "m3", "label": "资源匹配", "kind": "data" },
+        { "id": "m4", "label": "方案评审", "kind": "decision" },
+        { "id": "m5", "label": "保障机制", "kind": "quality" },
+        { "id": "m6", "label": "实施策略定稿", "kind": "end" }
+      ],
+      "groups": [
+        { "id": "design_group", "title": "策略设计", "node_ids": ["m1", "m2", "m3"] },
+        { "id": "review_group", "title": "评审闭环", "node_ids": ["m4", "m5", "m6"] }
+      ],
+      "edges": [
+        { "from": "m1", "to": "m2" },
+        { "from": "m2", "to": "m3" },
+        { "from": "m3", "to": "m4" },
+        { "from": "m4", "to": "m5", "label": "通过" },
+        { "from": "m4", "to": "m2", "label": "退回优化", "style": "dashed" },
+        { "from": "m5", "to": "m6" }
+      ]
+    },
+    {
+      "id": "chapter3_logic",
+      "title": "运营方案闭环图",
+      "chapter": "chapter3",
+      "layout": "TB",
+      "theme_key": "chapter3",
+      "legend": ["计划", "执行", "监控", "纠偏", "沉淀"],
+      "nodes": [
+        { "id": "p1", "label": "运营计划启动", "kind": "start" },
+        { "id": "p2", "label": "执行与监控", "kind": "process" },
+        { "id": "p3", "label": "指标采集", "kind": "data" },
+        { "id": "p4", "label": "达标判定", "kind": "decision" },
+        { "id": "p5", "label": "纠偏与优化", "kind": "quality" },
+        { "id": "p6", "label": "标准化沉淀", "kind": "end" }
+      ],
+      "groups": [
+        { "id": "run_group", "title": "执行监控", "node_ids": ["p1", "p2", "p3", "p4"] },
+        { "id": "close_group", "title": "优化沉淀", "node_ids": ["p5", "p6"] }
+      ],
+      "edges": [
+        { "from": "p1", "to": "p2" },
+        { "from": "p2", "to": "p3" },
+        { "from": "p3", "to": "p4" },
+        { "from": "p4", "to": "p6", "label": "达标" },
+        { "from": "p4", "to": "p5", "label": "未达标" },
+        { "from": "p5", "to": "p2", "label": "闭环优化", "style": "dashed" }
+      ]
+    }
+  ]
+}
