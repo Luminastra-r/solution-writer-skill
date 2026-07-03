@@ -49,7 +49,7 @@ cp .env.example .env
 ```json
 // artifacts/request.json
 {
-  "raw_input": "Write a solution: The client is a provincial branch of a bank planning to optimize their lobby service outsourcing. Current issues include service quality fluctuations and high complaint rates. The goal is to create an actionable annual operations optimization plan focused on customer satisfaction improvement, complaint reduction, and staffing optimization.",
+  "raw_input": "Write a solution: The client is a retail chain enterprise planning to upgrade their store operations system. Current issues include service quality fluctuations, high complaint rates, and uneven store traffic. The goal is to create an actionable annual operations optimization plan focused on customer satisfaction improvement, complaint reduction, staffing optimization, and service standardization.",
   "output_docx": "",
   "knowledge_root": "./knowledge",
   "research_mode": "hybrid",
