@@ -24,9 +24,9 @@ description: 面向 AI Agent 的长文解决方案写作技能。采用精简流
   - hybrid 模式：web 检索客户背景 + knowledge 检索公司能力（并行，不互斥）
   - BM25-like 知识索引 + 类别加权
   - 客户洞察：把检索片段结构化为《客户洞察》，作为诊断与写作底座
-- 不包含主链路能力：
-  - 逻辑图渲染（独立模块）
-  - 带图合稿
+- 可视化逻辑图：
+  - agent 生成 SVG → 转 PNG → 嵌入 docx（见文末「可视化逻辑图」章节，主链路已支持）
+  - Mermaid 路线（`render_diagrams.py` / `inject_diagrams.py`）保留为独立模块，可选
 
 ## 输入约束
 - 推荐只传 `raw_input`
@@ -102,6 +102,7 @@ description: 面向 AI Agent 的长文解决方案写作技能。采用精简流
 - `openai`
 - `requests`
 - `python-docx`
+- `cairosvg`（逻辑图 SVG→PNG；不可用时回退 `svglib`+`reportlab`）
 
 ## 运行建议
 ```bash
@@ -119,3 +120,49 @@ python scripts/orchestrate_solution.py \
 - hybrid 模式下 web 和 knowledge 并行，不再互斥
 - 以章为写作单位，不再逐节审查
 - 终审基于摘要而非全文截断
+
+## 视觉规范（深度研报风，对标样例 PDF）
+
+DOCX 导出（`generate_docx.py`，orchestrator 亦复用）统一遵循以下规范，无需额外配置：
+- 配色：墨黑 #1A1C1D（章标题/封面主标题）；钢青蓝 #2B6785（小节标题/封面装饰条/类型标签）；正文深灰蓝 #3A454B；摘要/元数据灰 #646464；图表注释浅灰 #9B9B9B；表头深青灰底 #446777
+- 字体：正文中文宋体（衬线）+ 西文/数字 Arial（无衬线）；标题微软雅黑 Bold；章 18pt、节 14pt、正文 11pt、图注 9pt 浅灰
+- 封面：左对齐垂直流——短蓝条 → 字距拉开的钢青蓝类型标签（如"深度研究 / 风险分析"，无底框）→ 28pt 墨黑大标题 → 短蓝条 → 灰色摘要段（常规体，无竖线无斜体）→ 浅灰元数据（年月 + 机构各一行）
+- 目录页：居中墨黑"目 录"，**无分隔线**；页脚居中浅灰页码
+- 版式：四边距 2.54cm；正文 1.75 倍行距、段前后各 0.5 行、两端对齐
+- 表格：表头 #446777 底白字加粗居中，数据行居中，顶/底深青灰线 + 行间浅灰横线，无竖线
+- 强调：正文 `**加粗**` 会转为真正加粗（写作侧仅允许关键数值/结论词，单段≤2 处）
+- 封面可选参数：`--subtitle`（元数据机构行，默认客户名）/ `--doctype`（类型标签）/ `--abstract`（摘要段）
+
+## 可视化逻辑图（内置 Visualizer + 文档嵌入）
+
+当方案内容出现以下任一情形时，生成逻辑图：
+- 多方/多角色关系（如签约结构、职责划分、系统对接）
+- 流程/步骤链（如办理流程、审批流、数据流向）
+- 对比或架构呈现（如方案选型、模块划分）
+
+生成与嵌入流程（每张图执行一次）：
+1. 调 read_me(modules=["diagram"]) 加载设计系统，严格遵守其返回的规则。
+2. 生成 SVG 字符串，写入本地文件 assets/diagram_<序号>.svg（viewBox 固定 "0 0 680 H"，扁平纯色填充，单图≤2 个色系，字号 13–15px，禁用渐变/阴影/emoji，节点文字 dominant-baseline="central"，并含 <title>/<desc>）。
+3. 调 show_widget(title=..., widget_code=<该SVG>, loading_messages=[...]) 做内联预览。
+4. 用 cairosvg 把 SVG 转成 assets/diagram_<序号>.png（output_width=1200 保证清晰）。
+5. 在方案文档的"## 逻辑图"小节（若该小节不存在则在对应结构段落后新建）用 python-docx 的 add_picture 嵌入 PNG，宽度约 6 英寸；随后保存 docx。
+6. 图只承载结构，所有说明文字写在正文（图外）。
+
+确定性约定：若方案模板含"## 架构与关系 / ## 逻辑图"小节，默认在该节必出一张结构图；其余情形按上面触发规则判断。
+
+### 本 skill 的落地约定（与主链路对齐）
+
+- 图文件统一放 `artifacts/diagrams/`（即上文的 `assets/`）：`diagram_01.svg` / `diagram_01.png`。
+- 转 PNG 优先用工具脚本，自动处理回退：
+  `python scripts/svg_to_png.py artifacts/diagrams/diagram_01.svg`（cairosvg 优先，失败自动回退 svglib，输出同名 .png，宽 1200px）。
+  脚本内置中文字体处理：自动注册系统可用的 CJK 字体（SimHei/雅黑/Noto 等）并注入 SVG 文本，无需在 SVG 中指定 font-family。
+- 嵌入方式：在 `artifacts/solution.md` 对应小节后直接插入一行 Markdown 图片引用，例如
+  `![总体架构逻辑图](diagrams/diagram_01.png)`，
+  随后走既有导出管线（`export_docx` / `generate_docx.py`）即自动嵌入 docx（图宽 15.5cm ≈ 6 英寸，自动编号图题"图N"），无需手写 add_picture。
+- 时序：所有图在"合稿 Markdown 之后、导出 DOCX 之前"完成生成与插入。
+
+### 跨平台兼容（非 WorkBuddy 环境）
+
+- `read_me` / `show_widget` 是 WorkBuddy 平台工具，仅用于加载设计规范与聊天内预览，**不影响产出物**。
+- 在其他 agent 平台使用时：跳过第 1、3 步，直接按第 2 步的 SVG 规范手写 SVG 落盘，再执行第 4、5 步即可，最终 docx 效果一致。
+- SVG 设计规范（无 read_me 可用时按此执行）：浅色背景（white/transparent）、深色文字；viewBox "0 0 680 H"；扁平纯色填充，单图 ≤2 个色系；字号 13–15px；禁用渐变/阴影/滤镜/emoji；节点文字 `dominant-baseline="central"`；根元素含 `<title>` 与 `<desc>`；箭头用 `<marker>` 定义。

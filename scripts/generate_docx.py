@@ -16,6 +16,135 @@ from docx import Document
 from docx.shared import Pt, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
+
+# ---- 视觉规范常量（对标深度研报样例：墨黑 + 钢青蓝）----
+COLOR_INK = RGBColor(0x1A, 0x1C, 0x1D)       # 章标题/封面主标题：近黑
+COLOR_STEEL = RGBColor(0x2B, 0x67, 0x85)     # 钢青蓝：小节标题/封面装饰线/标签
+COLOR_BODY = RGBColor(0x3A, 0x45, 0x4B)      # 正文：深灰蓝
+COLOR_GRAY = RGBColor(0x64, 0x64, 0x64)      # 摘要/元数据灰
+COLOR_CAPTION = RGBColor(0x9B, 0x9B, 0x9B)   # 图表注释浅灰
+COLOR_WHITE = RGBColor(0xFF, 0xFF, 0xFF)
+TABLE_HEADER_BG = "446777"                    # 表头深青灰底
+TABLE_LINE = "D9D9D9"                         # 表格内浅灰横线
+FONT_CJK_BODY = "宋体"          # 正文中文衬线
+FONT_CJK_HEAD = "微软雅黑"      # 标题中文无衬线（Bold）
+FONT_LATIN = "Arial"           # 英文/数字无衬线（Helvetica 类）
+
+
+def style_run(run, size=11, color=COLOR_BODY, bold=False, italic=False,
+              cjk_font=FONT_CJK_BODY, latin_font=FONT_LATIN, letter_spacing=None):
+    """统一设置中英文字体、字号、颜色、字重。letter_spacing 单位 pt。"""
+    run.font.name = latin_font
+    run._element.rPr.rFonts.set(qn('w:eastAsia'), cjk_font)
+    run.font.size = Pt(size)
+    run.font.color.rgb = color
+    run.font.bold = bold
+    run.font.italic = italic
+    if letter_spacing:
+        rPr = run._element.get_or_add_rPr()
+        spacing = OxmlElement('w:spacing')
+        spacing.set(qn('w:val'), str(int(letter_spacing * 20)))
+        rPr.append(spacing)
+
+
+def set_paragraph_border(paragraph, edge="bottom", color="2B6785", size=12, space=4):
+    """给段落加单边框（bottom=分隔线，left=竖线引导）。"""
+    pPr = paragraph._p.get_or_add_pPr()
+    pBdr = OxmlElement('w:pBdr')
+    border = OxmlElement(f'w:{edge}')
+    border.set(qn('w:val'), 'single')
+    border.set(qn('w:sz'), str(size))
+    border.set(qn('w:space'), str(space))
+    border.set(qn('w:color'), color)
+    pBdr.append(border)
+    pPr.append(pBdr)
+
+
+def add_dash(doc, width_cm=1.2, height_cm=0.09, fill="2B6785"):
+    """封面短装饰横条（钢青蓝小矩块）。"""
+    table = doc.add_table(rows=1, cols=1)
+    table.autofit = False
+    cell = table.rows[0].cells[0]
+    cell.width = Cm(width_cm)
+    table.rows[0].height = Cm(height_cm)
+    set_cell_shading(cell, fill)
+    # 去掉表格边框与单元格边距
+    tblPr = table._tbl.tblPr
+    tblBorders = OxmlElement('w:tblBorders')
+    for edge in ('top', 'bottom', 'left', 'right', 'insideH', 'insideV'):
+        border = OxmlElement(f'w:{edge}')
+        border.set(qn('w:val'), 'none')
+        tblBorders.append(border)
+    tblPr.append(tblBorders)
+    cell.paragraphs[0].paragraph_format.space_before = Pt(0)
+    cell.paragraphs[0].paragraph_format.space_after = Pt(0)
+    run = cell.paragraphs[0].add_run(" ")
+    run.font.size = Pt(2)
+    return table
+
+
+def set_run_shading(run, fill="F2F2F2"):
+    """给 run 加底色（用于封面类型标签）。"""
+    rPr = run._element.get_or_add_rPr()
+    shd = OxmlElement('w:shd')
+    shd.set(qn('w:val'), 'clear')
+    shd.set(qn('w:fill'), fill)
+    rPr.append(shd)
+
+
+def set_cell_shading(cell, fill):
+    """设置表格单元格底色。"""
+    tcPr = cell._tc.get_or_add_tcPr()
+    shd = OxmlElement('w:shd')
+    shd.set(qn('w:val'), 'clear')
+    shd.set(qn('w:fill'), fill)
+    tcPr.append(shd)
+
+
+def set_cell_border(cell, edge, size=6, color="1A1A1A"):
+    """设置单元格单边框（三线表用）。"""
+    tcPr = cell._tc.get_or_add_tcPr()
+    tcBorders = tcPr.find(qn('w:tcBorders'))
+    if tcBorders is None:
+        tcBorders = OxmlElement('w:tcBorders')
+        tcPr.append(tcBorders)
+    border = OxmlElement(f'w:{edge}')
+    border.set(qn('w:val'), 'single')
+    border.set(qn('w:sz'), str(size))
+    border.set(qn('w:color'), color)
+    tcBorders.append(border)
+
+
+def set_table_three_line_borders(table):
+    """研报表格：顶/底深青灰线，行间浅灰横线，无竖线。"""
+    tbl = table._tbl
+    tblPr = tbl.tblPr
+    tblBorders = OxmlElement('w:tblBorders')
+    edges = (('top', 'single', '12', TABLE_HEADER_BG),
+             ('bottom', 'single', '12', TABLE_HEADER_BG),
+             ('insideH', 'single', '4', TABLE_LINE),
+             ('left', 'none', None, None),
+             ('right', 'none', None, None),
+             ('insideV', 'none', None, None))
+    for edge, val, sz, color in edges:
+        border = OxmlElement(f'w:{edge}')
+        border.set(qn('w:val'), val)
+        if sz:
+            border.set(qn('w:sz'), sz)
+            border.set(qn('w:color'), color)
+        tblBorders.append(border)
+    tblPr.append(tblBorders)
+
+
+def add_rich_text(paragraph, text, size=11, color=COLOR_BODY):
+    """添加正文 run，**加粗** 片段转为 bold run（其余 Markdown 符号照常清理）。"""
+    parts = re.split(r'\*\*(.+?)\*\*', text)
+    for i, part in enumerate(parts):
+        if not part:
+            continue
+        run = paragraph.add_run(clean_markdown_format(part))
+        style_run(run, size=size, color=color, bold=(i % 2 == 1))
 
 
 def clean_markdown_format(text):
@@ -75,150 +204,204 @@ def set_chinese_font(run, font_name="宋体", size=11):
 
 
 def set_body_paragraph_format(paragraph):
-    """统一正文段落样式：首行缩进2字符、无段前后空白。"""
+    """正文段落：首行缩进2字符、1.75倍行距、段前后各0.5行。"""
     fmt = paragraph.paragraph_format
     fmt.first_line_indent = Pt(22)  # 约等于 11pt 字体下首行缩进2字符
-    fmt.line_spacing = 1.5
-    fmt.space_before = Pt(0)
-    fmt.space_after = Pt(0)
+    fmt.line_spacing = 1.75
+    fmt.space_before = Pt(6)
+    fmt.space_after = Pt(6)
     paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
 
 def setup_page_layout(doc):
-    """设置页面版式，采用常见商务文档参数。"""
+    """宽边距版式：上下左右均 2.54cm（1英寸），营造留白感。"""
     section = doc.sections[0]
     section.top_margin = Cm(2.54)
     section.bottom_margin = Cm(2.54)
-    section.left_margin = Cm(3.0)
-    section.right_margin = Cm(2.5)
+    section.left_margin = Cm(2.54)
+    section.right_margin = Cm(2.54)
     section.header_distance = Cm(1.5)
     section.footer_distance = Cm(1.75)
 
 
 def setup_styles(doc):
-    """设置全局样式，确保输出稳定且统一。"""
+    """全局样式：正文深灰蓝衬线、章标题墨黑、节标题钢青蓝。"""
     normal_style = doc.styles['Normal']
-    normal_style.font.name = '宋体'
+    normal_style.font.name = FONT_LATIN
     normal_style.font.size = Pt(11)
-    normal_style._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+    normal_style.font.color.rgb = COLOR_BODY
+    normal_style._element.rPr.rFonts.set(qn('w:eastAsia'), FONT_CJK_BODY)
 
     heading1 = doc.styles['Heading 1']
-    heading1.font.name = '黑体'
-    heading1.font.size = Pt(18)
-    heading1._element.rPr.rFonts.set(qn('w:eastAsia'), '黑体')
+    heading1.font.name = FONT_LATIN
+    heading1.font.size = Pt(20)
+    heading1.font.bold = True
+    heading1.font.color.rgb = COLOR_INK
+    heading1._element.rPr.rFonts.set(qn('w:eastAsia'), FONT_CJK_HEAD)
     heading1.paragraph_format.space_before = Pt(18)
-    heading1.paragraph_format.space_after = Pt(12)
+    heading1.paragraph_format.space_after = Pt(14)
     heading1.paragraph_format.line_spacing = 1.3
 
     heading2 = doc.styles['Heading 2']
-    heading2.font.name = '黑体'
-    heading2.font.size = Pt(16)
-    heading2._element.rPr.rFonts.set(qn('w:eastAsia'), '黑体')
-    heading2.paragraph_format.space_before = Pt(12)
-    heading2.paragraph_format.space_after = Pt(8)
+    heading2.font.name = FONT_LATIN
+    heading2.font.size = Pt(18)
+    heading2.font.bold = True
+    heading2.font.color.rgb = COLOR_INK
+    heading2._element.rPr.rFonts.set(qn('w:eastAsia'), FONT_CJK_HEAD)
+    heading2.paragraph_format.space_before = Pt(18)
+    heading2.paragraph_format.space_after = Pt(15)
     heading2.paragraph_format.line_spacing = 1.3
 
     heading3 = doc.styles['Heading 3']
-    heading3.font.name = '黑体'
+    heading3.font.name = FONT_LATIN
     heading3.font.size = Pt(14)
-    heading3._element.rPr.rFonts.set(qn('w:eastAsia'), '黑体')
-    heading3.paragraph_format.space_before = Pt(8)
-    heading3.paragraph_format.space_after = Pt(6)
+    heading3.font.bold = True
+    heading3.font.color.rgb = COLOR_STEEL
+    heading3._element.rPr.rFonts.set(qn('w:eastAsia'), FONT_CJK_HEAD)
+    heading3.paragraph_format.space_before = Pt(14)
+    heading3.paragraph_format.space_after = Pt(8)
     heading3.paragraph_format.line_spacing = 1.25
 
 
-def create_solution_docx(content, output_path, project_name, customer_name, input_base_dir):
+def add_page_number_footer(doc):
+    """页脚居中页码（浅灰小字）。"""
+    footer = doc.sections[0].footer
+    p = footer.paragraphs[0]
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    fld = OxmlElement('w:fldSimple')
+    fld.set(qn('w:instr'), 'PAGE')
+    run_el = OxmlElement('w:r')
+    rPr = OxmlElement('w:rPr')
+    rFonts = OxmlElement('w:rFonts')
+    rFonts.set(qn('w:ascii'), FONT_LATIN)
+    rFonts.set(qn('w:hAnsi'), FONT_LATIN)
+    rPr.append(rFonts)
+    sz = OxmlElement('w:sz')
+    sz.set(qn('w:val'), '18')  # 9pt
+    rPr.append(sz)
+    color = OxmlElement('w:color')
+    color.set(qn('w:val'), '9B9B9B')
+    rPr.append(color)
+    run_el.append(rPr)
+    t = OxmlElement('w:t')
+    t.text = '1'
+    run_el.append(t)
+    fld.append(run_el)
+    p._p.append(fld)
+
+
+def create_solution_docx(content, output_path, project_name, customer_name, input_base_dir,
+                         subtitle="", doc_type="深度研究 / 解决方案", abstract=""):
     """
     创建解决方案 DOCX 文档
-    
+
     Args:
         content: 文档内容（Markdown格式）
         output_path: 输出文件路径
         project_name: 项目名称
         customer_name: 客户名称
         input_base_dir: 输入Markdown所在目录（用于解析图片相对路径）
+        subtitle: 封面副标题（可选，默认用 customer_name）
+        doc_type: 封面类型标签文字（如 "深度研究"、"风险分析"）
+        abstract: 封面摘要（可选，竖线引导的斜体灰字区）
     """
     doc = Document()
 
     # 设置文档版式与样式
     setup_page_layout(doc)
     setup_styles(doc)
-    
+    add_page_number_footer(doc)
+
     # 1. 添加封面
-    add_cover_page(doc, project_name, customer_name)
-    
+    add_cover_page(doc, project_name, customer_name, subtitle=subtitle,
+                   doc_type=doc_type, abstract=abstract)
+
     # 2. 添加分页符
     doc.add_page_break()
-    
+
     # 3. 添加目录占位符
     add_toc_placeholder(doc)
-    
+
     # 4. 添加分页符
     doc.add_page_break()
-    
+
     # 5. 解析并添加正文内容
     add_body_content(doc, content, input_base_dir)
-    
+
     # 6. 保存文档
     doc.save(output_path)
     print(f"文档已生成: {output_path}")
     return output_path
 
 
-def add_cover_page(doc, project_name, customer_name):
-    """添加封面页"""
-    # 封面标题
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    
-    # 添加空行
-    for _ in range(8):
+def add_cover_page(doc, project_name, customer_name, subtitle="", doc_type="深度研究 / 解决方案", abstract=""):
+    """封面（对标研报样例）：左对齐垂直流。
+    短蓝条 → 字距拉开的类型标签 → 墨黑大标题 → 短蓝条 → 灰色摘要 → 元数据。
+    """
+    # 顶部留白
+    for _ in range(5):
         doc.add_paragraph()
-    
-    # 主标题
+
+    # 短装饰条（钢青蓝）
+    add_dash(doc)
+    doc.add_paragraph()
+
+    # 类型标签：小字、字距拉开、钢青蓝，无底框
     p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run(f"{customer_name}")
-    set_chinese_font(run, "黑体", 22)
-    run.font.color.rgb = RGBColor(0, 0, 0)
-    
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    run = p.add_run(doc_type)
+    style_run(run, size=11, color=COLOR_STEEL, cjk_font=FONT_CJK_HEAD, letter_spacing=3)
+    p.paragraph_format.space_after = Pt(18)
+
+    # 主标题：大号墨黑加粗（28pt，两行以内）
     p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run(f"{project_name}")
-    set_chinese_font(run, "黑体", 28)
-    run.font.color.rgb = RGBColor(0, 0, 0)
-    
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    run = p.add_run(project_name)
+    style_run(run, size=28, color=COLOR_INK, bold=True, cjk_font=FONT_CJK_HEAD)
+    p.paragraph_format.line_spacing = 1.25
+    p.paragraph_format.space_after = Pt(10)
+
+    # 第二道短装饰条
+    add_dash(doc)
+    doc.add_paragraph()
+
+    # 摘要段：灰色常规体（无竖线、无斜体）
+    if abstract:
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        run = p.add_run(abstract)
+        style_run(run, size=12, color=COLOR_GRAY)
+        p.paragraph_format.line_spacing = 1.75
+        p.paragraph_format.space_after = Pt(6)
+
+    doc.add_paragraph()
+
+    # 元数据：日期 + 机构，小字浅灰，各一行
     p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run("解决方案")
-    set_chinese_font(run, "黑体", 32)
-    run.font.color.rgb = RGBColor(0, 0, 0)
-    
-    # 添加空行
-    for _ in range(6):
-        doc.add_paragraph()
-    
-    # 底部信息
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run(f"编制日期：{datetime.now().strftime('%Y年%m月%d日')}")
-    set_chinese_font(run, "宋体", 14)
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    run = p.add_run(datetime.now().strftime('%Y年%m月'))
+    style_run(run, size=10.5, color=COLOR_CAPTION)
+    p.paragraph_format.space_after = Pt(2)
+    org = subtitle or customer_name
+    if org:
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        run = p.add_run(org)
+        style_run(run, size=10.5, color=COLOR_CAPTION)
 
 
 def add_toc_placeholder(doc):
-    """添加目录占位符"""
+    """目录页：居中墨黑标题，无分隔线（对标样例）。"""
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = p.add_run("目  录")
-    set_chinese_font(run, "黑体", 18)
-    
-    doc.add_paragraph()
-    
+    style_run(run, size=20, color=COLOR_INK, bold=True, cjk_font=FONT_CJK_HEAD)
+    p.paragraph_format.space_after = Pt(18)
+
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = p.add_run("[ 目录将在打开文档时自动生成 ]")
-    set_chinese_font(run, "宋体", 11)
-    run.font.color.rgb = RGBColor(128, 128, 128)
+    style_run(run, size=10.5, color=COLOR_CAPTION)
 
 
 def parse_markdown_table(lines, start_index):
@@ -277,7 +460,7 @@ def resolve_image_path(image_path, base_dir):
 
 
 def add_image_to_doc(doc, image_abs_path, caption, figure_index):
-    """插入图片与图题。"""
+    """插入图片与图题（9pt 斜体灰注释）。"""
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.paragraph_format.space_before = Pt(12)
@@ -293,41 +476,40 @@ def add_image_to_doc(doc, image_abs_path, caption, figure_index):
     cp.paragraph_format.space_after = Pt(10)
     cp.paragraph_format.line_spacing = 1.2
     c_run = cp.add_run(f"图{figure_index} {caption_text}")
-    set_chinese_font(c_run, "宋体", 10)
-    c_run.font.color.rgb = RGBColor(89, 89, 89)
+    style_run(c_run, size=9, color=COLOR_CAPTION)
 
 
 def add_table_to_doc(doc, table_data):
-    """将表格添加到文档"""
+    """研报表格：表头深青灰底白字加粗居中；数据行居中、行间浅灰横线。"""
     if not table_data or len(table_data) < 2:
         return
-    
+
     rows = len(table_data)
     cols = len(table_data[0])
-    
-    # 创建表格
+
     table = doc.add_table(rows=rows, cols=cols)
-    table.style = 'Table Grid'
     table.autofit = True
-    
-    # 填充表格内容
+    set_table_three_line_borders(table)
+
     for i, row_data in enumerate(table_data):
         row = table.rows[i]
+        is_header = (i == 0)
         for j, cell_text in enumerate(row_data):
             cell = row.cells[j]
+            if is_header:
+                set_cell_shading(cell, TABLE_HEADER_BG)
             p = cell.paragraphs[0]
-            p.paragraph_format.space_before = Pt(0)
-            p.paragraph_format.space_after = Pt(0)
-            p.paragraph_format.line_spacing = 1.25
+            p.paragraph_format.space_before = Pt(4)
+            p.paragraph_format.space_after = Pt(4)
+            p.paragraph_format.line_spacing = 1.3
+            p.paragraph_format.first_line_indent = Pt(0)
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
             run = p.add_run(cell_text)
-            set_chinese_font(run, "宋体", 10)
-            
-            # 表头加粗
-            if i == 0:
-                run.font.bold = True
-                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            if is_header:
+                style_run(run, size=10, color=COLOR_WHITE, bold=True, cjk_font=FONT_CJK_HEAD)
             else:
-                p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                style_run(run, size=10, color=COLOR_BODY)
 
 
 def add_body_content(doc, content, input_base_dir):
@@ -369,30 +551,36 @@ def add_body_content(doc, content, input_base_dir):
         # 清理当前行的 Markdown 格式
         cleaned_line = clean_markdown_format(line)
         
-        # 处理标题（保留标题层级，但去除 # 符号）
+        # 处理标题（对标研报：# 文档题-墨黑 / ## 章-墨黑无线 / ### 节-钢青蓝 / #### 段引导）
         if line.startswith('# '):
             p = doc.add_paragraph()
             p.style = 'Heading 1'
             run = p.add_run(cleaned_line)
-            set_chinese_font(run, "黑体", 18)
-        
-        elif line.startswith('## '):
+            style_run(run, size=20, color=COLOR_INK, bold=True, cjk_font=FONT_CJK_HEAD)
+
+        elif line.startswith('#### '):
             p = doc.add_paragraph()
-            p.style = 'Heading 2'
             run = p.add_run(cleaned_line)
-            set_chinese_font(run, "黑体", 16)
-        
+            style_run(run, size=12, color=COLOR_BODY, bold=True, cjk_font=FONT_CJK_HEAD)
+            p.paragraph_format.space_before = Pt(8)
+            p.paragraph_format.space_after = Pt(4)
+
         elif line.startswith('### '):
             p = doc.add_paragraph()
             p.style = 'Heading 3'
             run = p.add_run(cleaned_line)
-            set_chinese_font(run, "黑体", 14)
-        
-        else:
-            # 普通段落
+            style_run(run, size=14, color=COLOR_STEEL, bold=True, cjk_font=FONT_CJK_HEAD)
+
+        elif line.startswith('## '):
             p = doc.add_paragraph()
+            p.style = 'Heading 2'
             run = p.add_run(cleaned_line)
-            set_chinese_font(run, "宋体", 11)
+            style_run(run, size=18, color=COLOR_INK, bold=True, cjk_font=FONT_CJK_HEAD)
+
+        else:
+            # 普通段落：保留 **加粗** 为重点强调（关键数据/结论）
+            p = doc.add_paragraph()
+            add_rich_text(p, line, size=11)
             set_body_paragraph_format(p)
         
         i += 1
@@ -404,6 +592,9 @@ def main():
     parser.add_argument('--output', '-o', help='输出 DOCX 文件路径（可选）')
     parser.add_argument('--project', '-p', required=True, help='项目名称')
     parser.add_argument('--customer', '-c', required=True, help='客户名称')
+    parser.add_argument('--subtitle', default='', help='封面副标题（可选，默认用客户名称）')
+    parser.add_argument('--doctype', default='深度研究 / 解决方案', help='封面类型标签，如 "深度研究 / 风险分析"')
+    parser.add_argument('--abstract', default='', help='封面摘要（可选，竖线引导斜体区）')
     
     args = parser.parse_args()
     
@@ -444,7 +635,9 @@ def main():
     # 生成文档
     try:
         input_base_dir = str(Path(args.input).resolve().parent)
-        create_solution_docx(content, output_path, args.project, args.customer, input_base_dir)
+        create_solution_docx(content, output_path, args.project, args.customer, input_base_dir,
+                             subtitle=args.subtitle, doc_type=args.doctype,
+                             abstract=args.abstract)
         return 0
     except Exception as e:
         print(f"生成文档时出错: {str(e)}")
