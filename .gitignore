@@ -50,3 +50,6 @@ tmp/
 htmlcov/
 .coverage
 coverage.xml
+
+# ── Local agent memory (private, not shipped) ─────────
+.workbuddy/

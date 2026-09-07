@@ -15,24 +15,28 @@ from pathlib import Path
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_ROW_HEIGHT_RULE
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
-# ---- 视觉规范常量（对标深度研报样例：墨黑 + 钢青蓝）----
-COLOR_INK = RGBColor(0x1A, 0x1C, 0x1D)       # 章标题/封面主标题：近黑
-COLOR_STEEL = RGBColor(0x2B, 0x67, 0x85)     # 钢青蓝：小节标题/封面装饰线/标签
-COLOR_BODY = RGBColor(0x3A, 0x45, 0x4B)      # 正文：深灰蓝
-COLOR_GRAY = RGBColor(0x64, 0x64, 0x64)      # 摘要/元数据灰
+# ---- 视觉规范常量（对标深度研报样例：墨黑 + 深海蓝主色 + 活力橙辅色，全篇衬线）----
+COLOR_INK = RGBColor(0x1B, 0x1D, 0x1E)       # 章标题/封面主标题：墨黑
+COLOR_PRIMARY = RGBColor(0x20, 0x4B, 0x8C)   # 深海蓝：节标题/装饰条/类型标签
+COLOR_ACCENT = RGBColor(0xF4, 0x59, 0x38)    # 活力橙：次级强调/装饰强调点
+COLOR_BODY = RGBColor(0x1B, 0x1D, 0x1E)      # 正文：墨黑（衬线小字高对比）
+COLOR_GRAY = RGBColor(0x6F, 0x76, 0x79)       # 元数据：钢灰（对标样例）
+COLOR_SUMMARY = RGBColor(0x4A, 0x4A, 0x4A)   # 封面摘要段：深灰（对标样例 16pt）
 COLOR_CAPTION = RGBColor(0x9B, 0x9B, 0x9B)   # 图表注释浅灰
 COLOR_WHITE = RGBColor(0xFF, 0xFF, 0xFF)
-TABLE_HEADER_BG = "446777"                    # 表头深青灰底
-TABLE_LINE = "D9D9D9"                         # 表格内浅灰横线
-FONT_CJK_BODY = "宋体"          # 正文中文衬线
-FONT_CJK_HEAD = "微软雅黑"      # 标题中文无衬线（Bold）
-FONT_LATIN = "Arial"           # 英文/数字无衬线（Helvetica 类）
+TABLE_HEADER_BG = "204B8C"                   # 表头：深海蓝底
+TABLE_HEADER_FG = "FFFFFF"                   # 表头文字：白
+TABLE_LINE = "D9D9D9"                        # 表格内浅灰横线
+FONT_CJK_BODY = "Noto Serif SC"   # 正文中文衬线（全篇对齐参考研报：Noto Serif SC Regular）
+FONT_CJK_HEAD = "Noto Serif SC"   # 标题中文衬线（加粗=Noto Serif SC Bold，对标研报）
+FONT_LATIN = "Noto Serif SC"      # 英文/数字衬线（参考研报拉丁字形亦出自 Noto Serif SC，全篇统一）
 
 
-def style_run(run, size=11, color=COLOR_BODY, bold=False, italic=False,
+def style_run(run, size=10.5, color=COLOR_BODY, bold=False, italic=False,
               cjk_font=FONT_CJK_BODY, latin_font=FONT_LATIN, letter_spacing=None):
     """统一设置中英文字体、字号、颜色、字重。letter_spacing 单位 pt。"""
     run.font.name = latin_font
@@ -48,7 +52,7 @@ def style_run(run, size=11, color=COLOR_BODY, bold=False, italic=False,
         rPr.append(spacing)
 
 
-def set_paragraph_border(paragraph, edge="bottom", color="2B6785", size=12, space=4):
+def set_paragraph_border(paragraph, edge="bottom", color="204B8C", size=12, space=4):
     """给段落加单边框（bottom=分隔线，left=竖线引导）。"""
     pPr = paragraph._p.get_or_add_pPr()
     pBdr = OxmlElement('w:pBdr')
@@ -61,13 +65,14 @@ def set_paragraph_border(paragraph, edge="bottom", color="2B6785", size=12, spac
     pPr.append(pBdr)
 
 
-def add_dash(doc, width_cm=1.2, height_cm=0.09, fill="2B6785"):
-    """封面短装饰横条（钢青蓝小矩块）。"""
+def add_dash(doc, width_cm=1.27, height_cm=0.06, fill="204B8C"):
+    """封面短装饰条（对标样例：36pt × 1.5pt 细横条；可用 fill 参数换色）。"""
     table = doc.add_table(rows=1, cols=1)
     table.autofit = False
     cell = table.rows[0].cells[0]
     cell.width = Cm(width_cm)
     table.rows[0].height = Cm(height_cm)
+    table.rows[0].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
     set_cell_shading(cell, fill)
     # 去掉表格边框与单元格边距
     tblPr = table._tbl.tblPr
@@ -137,7 +142,7 @@ def set_table_three_line_borders(table):
     tblPr.append(tblBorders)
 
 
-def add_rich_text(paragraph, text, size=11, color=COLOR_BODY):
+def add_rich_text(paragraph, text, size=10.5, color=COLOR_BODY):
     """添加正文 run，**加粗** 片段转为 bold run（其余 Markdown 符号照常清理）。"""
     parts = re.split(r'\*\*(.+?)\*\*', text)
     for i, part in enumerate(parts):
@@ -214,8 +219,10 @@ def set_body_paragraph_format(paragraph):
 
 
 def setup_page_layout(doc):
-    """宽边距版式：上下左右均 2.54cm（1英寸），营造留白感。"""
+    """A4 版式（对标样例 595.3×841.9pt）：四边距 2.54cm，营造留白感。"""
     section = doc.sections[0]
+    section.page_width = Cm(21.0)
+    section.page_height = Cm(29.7)
     section.top_margin = Cm(2.54)
     section.bottom_margin = Cm(2.54)
     section.left_margin = Cm(2.54)
@@ -225,10 +232,10 @@ def setup_page_layout(doc):
 
 
 def setup_styles(doc):
-    """全局样式：正文深灰蓝衬线、章标题墨黑、节标题钢青蓝。"""
+    """全局样式：正文墨黑衬线、章标题墨黑、节标题深海蓝。"""
     normal_style = doc.styles['Normal']
     normal_style.font.name = FONT_LATIN
-    normal_style.font.size = Pt(11)
+    normal_style.font.size = Pt(10.5)
     normal_style.font.color.rgb = COLOR_BODY
     normal_style._element.rPr.rFonts.set(qn('w:eastAsia'), FONT_CJK_BODY)
 
@@ -256,7 +263,7 @@ def setup_styles(doc):
     heading3.font.name = FONT_LATIN
     heading3.font.size = Pt(14)
     heading3.font.bold = True
-    heading3.font.color.rgb = COLOR_STEEL
+    heading3.font.color.rgb = COLOR_PRIMARY
     heading3._element.rPr.rFonts.set(qn('w:eastAsia'), FONT_CJK_HEAD)
     heading3.paragraph_format.space_before = Pt(14)
     heading3.paragraph_format.space_after = Pt(8)
@@ -288,6 +295,19 @@ def add_page_number_footer(doc):
     run_el.append(t)
     fld.append(run_el)
     p._p.append(fld)
+
+
+def enable_font_embedding(doc):
+    """在 word/settings.xml 写入嵌入字体标志：在 Word 中另存为时自动嵌入"用到的字形子集"，
+    使 Noto Serif SC 等自定义字体可跨机器保真（文件体积小，仅含文档实际用到的字形）。
+    WPS/其他查看器忽略该标志亦不影响正常打开。"""
+    try:
+        settings = doc.settings.element
+    except AttributeError:
+        settings = doc.settings._element
+    for tag in ("w:embedTrueTypeFonts", "w:saveSubsetFonts"):
+        el = OxmlElement(tag)
+        settings.insert(0, el)
 
 
 def create_solution_docx(content, output_path, project_name, customer_name, input_base_dir,
@@ -328,66 +348,138 @@ def create_solution_docx(content, output_path, project_name, customer_name, inpu
     # 5. 解析并添加正文内容
     add_body_content(doc, content, input_base_dir)
 
-    # 6. 保存文档
+    # 6. 嵌入字体标志（Word 另存为时子集化，保证自定义字体跨机器一致）
+    enable_font_embedding(doc)
+
+    # 7. 保存文档
     doc.save(output_path)
     print(f"文档已生成: {output_path}")
     return output_path
 
 
-def add_cover_page(doc, project_name, customer_name, subtitle="", doc_type="深度研究 / 解决方案", abstract=""):
-    """封面（对标研报样例）：左对齐垂直流。
-    短蓝条 → 字距拉开的类型标签 → 墨黑大标题 → 短蓝条 → 灰色摘要 → 元数据。
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+COVER_BG_IMAGE = ASSETS_DIR / "cover_bg_a4.png"
+
+
+def add_page_background(doc, anchor_paragraph):
+    """整页背景装饰（对标研报封面双大圆水印）。
+
+    将 A4 透明 PNG（右上深海蓝大圆 + 左下活力橙大圆，低透明度）作为浮动图片
+    插入：衬于文字下方（behindDoc=1）、锚定到页面 (0,0)、尺寸铺满整页。
     """
-    # 顶部留白
-    for _ in range(5):
-        doc.add_paragraph()
+    if not COVER_BG_IMAGE.exists():
+        return
+    section = doc.sections[0]
+    run = anchor_paragraph.add_run()
+    run.add_picture(str(COVER_BG_IMAGE),
+                    width=section.page_width, height=section.page_height)
 
-    # 短装饰条（钢青蓝）
+    # 把 wp:inline 改写为 wp:anchor（页面锚定 + 衬于文字下方）
+    drawing = run._element.find(qn('w:drawing'))
+    if drawing is None:
+        return
+    inline = drawing.find(qn('wp:inline'))
+    if inline is None:
+        return
+    anchor = OxmlElement('wp:anchor')
+    for key, val in (('distT', '0'), ('distB', '0'), ('distL', '0'), ('distR', '0'),
+                     ('simplePos', '0'), ('relativeHeight', '0'), ('behindDoc', '1'),
+                     ('locked', '1'), ('layoutInCell', '1'), ('allowOverlap', '1')):
+        anchor.set(key, val)
+
+    simple_pos = OxmlElement('wp:simplePos')
+    simple_pos.set('x', '0')
+    simple_pos.set('y', '0')
+
+    pos_h = OxmlElement('wp:positionH')
+    pos_h.set('relativeFrom', 'page')
+    off_h = OxmlElement('wp:posOffset')
+    off_h.text = '0'
+    pos_h.append(off_h)
+
+    pos_v = OxmlElement('wp:positionV')
+    pos_v.set('relativeFrom', 'page')
+    off_v = OxmlElement('wp:posOffset')
+    off_v.text = '0'
+    pos_v.append(off_v)
+
+    extent = inline.find(qn('wp:extent'))
+    doc_pr = inline.find(qn('wp:docPr'))
+    graphic = inline.find(qn('a:graphic'))
+    wrap_none = OxmlElement('wp:wrapNone')
+
+    for el in (simple_pos, pos_h, pos_v, extent, wrap_none, doc_pr, graphic):
+        if el is not None:
+            anchor.append(el)
+
+    drawing.remove(inline)
+    drawing.append(anchor)
+
+
+def add_cover_page(doc, project_name, customer_name, subtitle="", doc_type="深度研究 / 解决方案", abstract=""):
+    """封面（对标研报样例）：左对齐垂直流 + 双大圆水印背景。
+    短蓝条 → 13pt 类型标签 → 40pt 墨黑衬线大标题 → 短蓝条 → 16pt 灰色摘要 → 11pt 元数据。
+    垂直节奏对标样例：条①(页顶~44pt) → 标签(+100pt) → 标题(+29pt) → 条②(+50pt) → 摘要(+39pt) → 元数据(+44pt)。
+    """
+    # 顶部留白（约 44pt，对标样例装饰条距页顶位置）
+    bg_anchor = None
+    for _ in range(3):
+        p = doc.add_paragraph()
+        if bg_anchor is None:
+            bg_anchor = p
+
+    # 整页背景装饰：右上深海蓝大圆 + 左下活力橙大圆（水印级透明度，衬于文字下方）
+    add_page_background(doc, bg_anchor)
+
+    # 短装饰条①（深海蓝细条）
     add_dash(doc)
-    doc.add_paragraph()
 
-    # 类型标签：小字、字距拉开、钢青蓝，无底框
+    # 类型标签：13pt、字距拉开、深海蓝（与装饰条间距约 100pt）
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
     run = p.add_run(doc_type)
-    style_run(run, size=11, color=COLOR_STEEL, cjk_font=FONT_CJK_HEAD, letter_spacing=3)
-    p.paragraph_format.space_after = Pt(18)
+    style_run(run, size=13, color=COLOR_PRIMARY, cjk_font=FONT_CJK_HEAD, letter_spacing=3)
+    p.paragraph_format.space_before = Pt(100)
+    p.paragraph_format.space_after = Pt(0)
 
-    # 主标题：大号墨黑加粗（28pt，两行以内）
+    # 主标题：40pt 墨黑衬线加粗（对标样例），行距 1.2
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
     run = p.add_run(project_name)
-    style_run(run, size=28, color=COLOR_INK, bold=True, cjk_font=FONT_CJK_HEAD)
-    p.paragraph_format.line_spacing = 1.25
-    p.paragraph_format.space_after = Pt(10)
+    style_run(run, size=40, color=COLOR_INK, bold=True, cjk_font=FONT_CJK_HEAD)
+    p.paragraph_format.space_before = Pt(28)
+    p.paragraph_format.line_spacing = 1.2
+    p.paragraph_format.space_after = Pt(48)
 
-    # 第二道短装饰条
+    # 短装饰条②（深海蓝细条）
     add_dash(doc)
-    doc.add_paragraph()
 
-    # 摘要段：灰色常规体（无竖线、无斜体）
+    # 摘要段：16pt 深灰常规体，行距 1.7（对标样例）
     if abstract:
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.LEFT
         run = p.add_run(abstract)
-        style_run(run, size=12, color=COLOR_GRAY)
-        p.paragraph_format.line_spacing = 1.75
-        p.paragraph_format.space_after = Pt(6)
+        style_run(run, size=16, color=COLOR_SUMMARY)
+        p.paragraph_format.space_before = Pt(38)
+        p.paragraph_format.line_spacing = 1.7
+        p.paragraph_format.space_after = Pt(0)
 
-    doc.add_paragraph()
-
-    # 元数据：日期 + 机构，小字浅灰，各一行
+    # 元数据：11pt 钢灰两行（年月 + 机构），行距对标样例
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
     run = p.add_run(datetime.now().strftime('%Y年%m月'))
-    style_run(run, size=10.5, color=COLOR_CAPTION)
-    p.paragraph_format.space_after = Pt(2)
+    style_run(run, size=11, color=COLOR_GRAY)
+    p.paragraph_format.space_before = Pt(42)
+    p.paragraph_format.space_after = Pt(0)
+
     org = subtitle or customer_name
     if org:
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.LEFT
         run = p.add_run(org)
-        style_run(run, size=10.5, color=COLOR_CAPTION)
+        style_run(run, size=11, color=COLOR_GRAY)
+        p.paragraph_format.space_before = Pt(7)
+        p.paragraph_format.space_after = Pt(0)
 
 
 def add_toc_placeholder(doc):
@@ -507,9 +599,9 @@ def add_table_to_doc(doc, table_data):
 
             run = p.add_run(cell_text)
             if is_header:
-                style_run(run, size=10, color=COLOR_WHITE, bold=True, cjk_font=FONT_CJK_HEAD)
+                style_run(run, size=10.5, color=COLOR_WHITE, bold=True, cjk_font=FONT_CJK_HEAD)
             else:
-                style_run(run, size=10, color=COLOR_BODY)
+                style_run(run, size=10.5, color=COLOR_BODY)
 
 
 def add_body_content(doc, content, input_base_dir):
@@ -551,7 +643,7 @@ def add_body_content(doc, content, input_base_dir):
         # 清理当前行的 Markdown 格式
         cleaned_line = clean_markdown_format(line)
         
-        # 处理标题（对标研报：# 文档题-墨黑 / ## 章-墨黑无线 / ### 节-钢青蓝 / #### 段引导）
+        # 处理标题（对标研报：# 文档题-墨黑 / ## 章-墨黑 / ### 节-深海蓝 / #### 段引导）
         if line.startswith('# '):
             p = doc.add_paragraph()
             p.style = 'Heading 1'
@@ -569,7 +661,7 @@ def add_body_content(doc, content, input_base_dir):
             p = doc.add_paragraph()
             p.style = 'Heading 3'
             run = p.add_run(cleaned_line)
-            style_run(run, size=14, color=COLOR_STEEL, bold=True, cjk_font=FONT_CJK_HEAD)
+            style_run(run, size=14, color=COLOR_PRIMARY, bold=True, cjk_font=FONT_CJK_HEAD)
 
         elif line.startswith('## '):
             p = doc.add_paragraph()
