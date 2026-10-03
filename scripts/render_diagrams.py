@@ -4,8 +4,8 @@ Render business-style diagrams from structured JSON specs.
 
 Pipeline:
 1) JSON spec -> Mermaid source (stable template-driven conversion)
-2) Mermaid source -> PNG image (mmdc preferred, Kroki optional fallback)
-3) Emit manifest for downstream DOCX embedding
+2) Dispatch to the shared offline Mermaid / SVG / Matplotlib renderer
+3) Emit SVG + PNG + manifest for downstream DOCX embedding
 """
 
 import argparse
@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import time
+import html
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -23,6 +24,13 @@ import requests
 
 
 THEME_PRESETS = {
+    "solution": {
+        "primaryColor": "#EDF2F8", "primaryBorderColor": "#204B8C",
+        "primaryTextColor": "#1B1D1E", "secondaryColor": "#DDE7F2",
+        "tertiaryColor": "#F4F7FB", "lineColor": "#6F7679",
+        "clusterBkg": "#F7F9FC", "clusterBorder": "#A6BAD5",
+        "processFill": "#EDF2F8", "dataFill": "#FCEBE7", "qualityFill": "#EDF2F8",
+    },
     "default": {
         "primaryColor": "#E8EEF5",
         "primaryBorderColor": "#1F4E79",
@@ -96,13 +104,13 @@ def _safe_id(raw: str) -> str:
         return "node"
     if re.match(r"^\d", s):
         s = f"n_{s}"
-    return s
+    return "n_" + s  # Prefix avoids Mermaid reserved words such as 'end'.
 
 
 def _escape_label(text: str) -> str:
     text = (text or "").replace('"', "'").strip()
     text = re.sub(r"\s+", " ", text)
-    return text
+    return html.escape(text, quote=True).replace("|", "&#124;").replace("`", "&#96;")
 
 
 def _node_shape(kind: str, label: str) -> str:
@@ -121,6 +129,8 @@ def _node_shape(kind: str, label: str) -> str:
 
 def _class_for_kind(kind: str) -> str:
     k = (kind or "process").lower()
+    if k == "end":
+        return "finish"
     if k in {"start", "end", "decision", "data", "quality"}:
         return k
     return "process"
@@ -132,8 +142,9 @@ def _theme_for_key(theme_key: str) -> Dict[str, str]:
 
 def _mermaid_init(theme_key: str) -> str:
     theme = _theme_for_key(theme_key)
-    return """%%{init: {"theme": "base", "themeVariables": {
-  "fontFamily": "Microsoft YaHei",
+    return """%%%%{init: {"theme": "base", "look": "classic", "htmlLabels": false, "themeVariables": {
+  "fontFamily": "Noto Serif SC, Microsoft YaHei, sans-serif",
+  "fontSize": "15px",
   "primaryColor": "%(primaryColor)s",
   "primaryBorderColor": "%(primaryBorderColor)s",
   "primaryTextColor": "%(primaryTextColor)s",
@@ -142,32 +153,37 @@ def _mermaid_init(theme_key: str) -> str:
   "lineColor": "%(lineColor)s",
   "clusterBkg": "%(clusterBkg)s",
   "clusterBorder": "%(clusterBorder)s"
-}}}%%""" % theme
+}, "flowchart": {"htmlLabels": false, "nodeSpacing": 35, "rankSpacing": 50, "wrappingWidth": 180}}}%%%%""" % theme
 
 
 def _class_def(theme_key: str) -> str:
     theme = _theme_for_key(theme_key)
-    return """
+    result = """
 classDef start fill:%(primaryBorderColor)s,stroke:%(primaryBorderColor)s,color:#FFFFFF,stroke-width:1.8px;
-classDef end fill:%(primaryBorderColor)s,stroke:%(primaryBorderColor)s,color:#FFFFFF,stroke-width:1.8px;
+classDef finish fill:%(primaryBorderColor)s,stroke:%(primaryBorderColor)s,color:#FFFFFF,stroke-width:1.8px;
 classDef process fill:%(processFill)s,stroke:%(primaryBorderColor)s,color:%(primaryTextColor)s,stroke-width:1.4px;
 classDef decision fill:%(tertiaryColor)s,stroke:%(lineColor)s,color:%(primaryTextColor)s,stroke-width:1.4px;
 classDef data fill:%(dataFill)s,stroke:#AF7B2A,color:#4B3520,stroke-width:1.4px;
 classDef quality fill:%(qualityFill)s,stroke:#2F7D57,color:#1D4A34,stroke-width:1.4px;
 classDef legend fill:#FFFFFF,stroke:%(clusterBorder)s,color:%(primaryTextColor)s,stroke-dasharray: 4 2;
 """ % theme
+    if theme_key == "solution":
+        result = result.replace("#AF7B2A", "#F45938").replace("#4B3520", "#1B1D1E")
+        result = result.replace("#2F7D57", "#204B8C").replace("#1D4A34", "#1B1D1E")
+    return result
 
 
 def _normalize_diagram(diagram: Dict) -> Dict:
     normalized = dict(diagram)
-    nodes = list(normalized.get("nodes", []))[:14]
+    nodes = list(normalized.get("nodes", []))
+    if len(nodes) > 24 or len(normalized.get("edges", [])) > 48:
+        raise ValueError("Graph too dense: split into overview and subgraphs (24 nodes/48 edges maximum)")
     node_ids = {str(node.get("id", "")) for node in nodes}
     normalized["nodes"] = nodes
-    normalized["edges"] = [
-        edge
-        for edge in normalized.get("edges", [])
-        if str(edge.get("from", "")) in node_ids and str(edge.get("to", "")) in node_ids
-    ][:20]
+    normalized["edges"] = list(normalized.get("edges", []))
+    if any(str(e.get("from", "")) not in node_ids or str(e.get("to", "")) not in node_ids
+           for e in normalized["edges"]):
+        raise ValueError("Edge references unknown node")
     groups = []
     for group in normalized.get("groups", []):
         members = [str(node_id) for node_id in group.get("node_ids", []) if str(node_id) in node_ids]
@@ -183,6 +199,10 @@ def _normalize_diagram(diagram: Dict) -> Dict:
 def build_mermaid(diagram: Dict) -> str:
     diagram = _normalize_diagram(diagram)
     layout = diagram.get("layout", "TB")
+    if layout == "auto":
+        layout = "LR" if len(diagram.get("nodes", [])) <= 4 else "TB"
+    if layout not in {"TB", "LR", "BT", "RL"}:
+        raise ValueError("Invalid Mermaid layout")
     nodes = diagram.get("nodes", [])
     edges = diagram.get("edges", [])
     groups = diagram.get("groups", [])
@@ -237,12 +257,10 @@ def build_mermaid(diagram: Dict) -> str:
 
     legend_items = diagram.get("legend", [])
     if legend_items:
-        lines.append('  subgraph legend_block["图例"]')
-        for index, item in enumerate(legend_items, start=1):
-            legend_id = f"legend_{index}"
-            lines.append(f'    {legend_id}["{_escape_label(item)}"]')
-            class_lines.append(f"  class {legend_id} legend;")
-        lines.append("  end")
+        # A compact legend avoids a disconnected vertical cluster dominating the canvas.
+        label = _escape_label("图例：" + " / ".join(legend_items))
+        lines.append(f'  legend_note["{label}"]')
+        class_lines.append("  class legend_note legend;")
 
     lines.append(_class_def(theme_key).strip())
     lines.extend(class_lines)
@@ -256,6 +274,9 @@ def _render_with_mmdc(
     scale: float,
     timeout: int,
 ) -> Tuple[bool, str]:
+    # Windows cmd shims misparse relative paths containing forward slashes.
+    if Path(mmdc_bin).is_file():
+        mmdc_bin = str(Path(mmdc_bin).resolve())
     cmd = [
         mmdc_bin,
         "-i",
@@ -268,7 +289,7 @@ def _render_with_mmdc(
         str(scale),
     ]
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=True)
+        p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, check=True)
         if p.stderr.strip():
             return True, p.stderr.strip()
         return True, ""
@@ -279,7 +300,7 @@ def _render_with_mmdc(
 
 
 def _render_with_kroki(mermaid_src: str, image_path: Path, kroki_url: str, timeout: int) -> Tuple[bool, str]:
-    url = kroki_url.rstrip("/") + "/mermaid/png"
+    url = kroki_url.rstrip("/") + "/mermaid/" + image_path.suffix.lstrip(".")
     try:
         r = requests.post(url, data=mermaid_src.encode("utf-8"), headers={"Content-Type": "text/plain"}, timeout=timeout)
         if r.status_code != 200:
@@ -312,12 +333,14 @@ def _try_render(
             if ok and svg_path is not None:
                 ok_svg, err_svg = _render_with_mmdc(mermaid_path, svg_path, mmdc_bin, scale, timeout)
                 if not ok_svg:
-                    err = err_svg
+                    ok, err = False, err_svg
         elif engine == "kroki":
             if not kroki_url:
                 ok, err = False, "Kroki URL is required when engine=kroki."
             else:
                 ok, err = _render_with_kroki(mermaid_src, image_path, kroki_url, timeout)
+                if ok and svg_path is not None:
+                    ok, err = _render_with_kroki(mermaid_src, svg_path, kroki_url, timeout)
         else:
             ok, err = False, f"Unsupported engine: {engine}"
 
@@ -355,7 +378,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Render diagrams from structured JSON specs.")
     parser.add_argument("--spec-json", required=True, help="Path to JSON specs.")
     parser.add_argument("--out-dir", required=True, help="Output directory for .mmd/.png/.json.")
-    parser.add_argument("--engine", choices=["mmdc", "kroki"], default="mmdc", help="Rendering engine.")
+    parser.add_argument("--engine", choices=["auto", "svg", "mmdc", "kroki"], default="auto", help="Local-first rendering engine.")
+    parser.add_argument("--request-json", help="Optional request including visualization_data/config.")
     parser.add_argument("--mmdc-bin", help="Path to mmdc binary.")
     parser.add_argument("--kroki-url", help="Kroki base URL, e.g. https://kroki.io")
     parser.add_argument("--retries", type=int, default=2, help="Retries on render failure.")
@@ -380,95 +404,29 @@ def main() -> int:
     if args.chapter_filter:
         chapter_allow = {x.strip() for x in args.chapter_filter.split(",") if x.strip()}
 
+    from solution_skill.visualization.pipeline import render_tasks
     try:
-        mmdc_bin = _ensure_mmdc(args.engine, args.mmdc_bin)
-    except Exception as e:
-        print(str(e))
+        request = json.loads(Path(args.request_json).read_text(encoding="utf-8-sig")) if args.request_json else {}
+        cfg = dict(request.get("visualization") or {})
+        cfg.update(engine=args.engine, retries=args.retries, timeout=args.timeout,
+                   mmdc_bin=args.mmdc_bin, kroki_url=args.kroki_url,
+                   scale=args.scale, backoff_seconds=args.backoff_seconds)
+        request["visualization"] = cfg
+        specs = [d for d in specs if chapter_allow is None or d.get("chapter") in chapter_allow]
+        # Preserve old default IDs/titles while retaining per-task validation errors.
+        specs = [dict(d, id=d.get("id") or f"diagram_{i}", title=d.get("title") or d.get("id") or f"图{i}")
+                 if isinstance(d, dict) else d for i, d in enumerate(specs, 1)]
+        manifest = render_tasks(specs, out_dir, request)
+        items = manifest["items"]
+        ok = sum(i["status"] == "ok" for i in items)
+        print(f"Rendered {ok}/{len(items)} diagrams. Manifest: {out_dir / 'diagram_manifest.json'}")
+        for item in items:
+            if item["status"] != "ok":
+                print(f"[{item['status'].upper()}] {item['diagram_id']}: {item.get('error')}")
+        return 0 if ok == len(items) else 2
+    except Exception as exc:
+        print(f"Rendering failed: {exc}")
         return 1
-
-    results: List[RenderResult] = []
-    for idx, d in enumerate(specs, start=1):
-        chapter = str(d.get("chapter", "")).strip()
-        if chapter_allow is not None and chapter not in chapter_allow:
-            continue
-
-        did = str(d.get("id", f"diagram_{idx}")).strip() or f"diagram_{idx}"
-        title = str(d.get("title", did)).strip()
-        safe = _safe_id(did).lower()
-        mermaid_path = out_dir / f"{safe}.mmd"
-        image_path = out_dir / f"{safe}.png"
-        svg_path = out_dir / f"{safe}.svg"
-
-        try:
-            mermaid_src = build_mermaid(d)
-            ok, msg = _try_render(
-                mermaid_src=mermaid_src,
-                mermaid_path=mermaid_path,
-                image_path=image_path,
-                svg_path=svg_path if args.export_svg else None,
-                engine=args.engine,
-                mmdc_bin=mmdc_bin,
-                kroki_url=args.kroki_url,
-                retries=max(0, args.retries),
-                backoff_seconds=max(0.1, args.backoff_seconds),
-                scale=max(1.0, args.scale),
-                timeout=max(5, args.timeout),
-            )
-            if ok:
-                results.append(
-                    RenderResult(
-                        diagram_id=did,
-                        title=title,
-                        chapter=chapter,
-                        mermaid_path=str(mermaid_path.resolve()),
-                        image_path=str(image_path.resolve()),
-                        svg_path=str(svg_path.resolve()) if args.export_svg and svg_path.exists() else "",
-                        status="ok",
-                        error=msg,
-                    )
-                )
-            else:
-                results.append(
-                    RenderResult(
-                        diagram_id=did,
-                        title=title,
-                        chapter=chapter,
-                        mermaid_path=str(mermaid_path.resolve()),
-                        image_path=str(image_path.resolve()),
-                        svg_path=str(svg_path.resolve()) if args.export_svg and svg_path.exists() else "",
-                        status="failed",
-                        error=msg,
-                    )
-                )
-        except Exception as e:
-            results.append(
-                RenderResult(
-                    diagram_id=did,
-                    title=title,
-                    chapter=chapter,
-                    mermaid_path=str(mermaid_path.resolve()),
-                    image_path=str(image_path.resolve()),
-                    svg_path=str(svg_path.resolve()) if args.export_svg and svg_path.exists() else "",
-                    status="failed",
-                    error=str(e),
-                )
-            )
-
-    manifest = {
-        "generated_at": int(time.time()),
-        "engine": args.engine,
-        "items": [r.__dict__ for r in results],
-    }
-    manifest_path = out_dir / "diagram_manifest.json"
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    failed = [x for x in results if x.status != "ok"]
-    print(f"Rendered {len(results) - len(failed)}/{len(results)} diagrams. Manifest: {manifest_path}")
-    if failed:
-        for item in failed:
-            print(f"[FAILED] {item.diagram_id}: {item.error}")
-        return 2
-    return 0
 
 
 if __name__ == "__main__":

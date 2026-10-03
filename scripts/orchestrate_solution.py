@@ -54,6 +54,7 @@ from solution_skill.writing.markdown_builder import (
 )
 from solution_skill.writing.quality_review import run_quality_review
 from solution_skill.export.docx_exporter import export_docx
+from solution_skill.visualization import visualize_solution
 
 
 def log(message: str) -> None:
@@ -158,6 +159,7 @@ def orchestrate(args: argparse.Namespace) -> int:
     state_store.mark_step("write_chapters", "running")
     chapter_texts = {}
     completed_chapters = []
+    diagram_tasks = list(request.get("diagrams", []))
 
     for chapter in chapters:
         log(f"Writing chapter {chapter.index}: {chapter.title}")
@@ -173,6 +175,7 @@ def orchestrate(args: argparse.Namespace) -> int:
             chapters_dir=chapters_dir,
         )
         chapter_texts[chapter.id] = body
+        diagram_tasks.extend(meta.get("diagrams", []))
         completed_chapters.append({
             "id": chapter.id,
             "title": chapter.title,
@@ -186,6 +189,22 @@ def orchestrate(args: argparse.Namespace) -> int:
     log("Merging solution markdown...")
     solution_md = build_solution_markdown(blueprint, chapters, chapter_texts)
     solution_path = save_solution_markdown(solution_md, artifacts_dir)
+    # Persist plain prose first; any optional visualization failure leaves it intact.
+    state_store.mark_step("visualization", "running")
+    _write_json(artifacts_dir / "diagram_tasks.json", {"diagrams": diagram_tasks})
+    try:
+        solution_md, manifest = visualize_solution(
+            solution_md, diagram_tasks, request, research_pack, artifacts_dir, state_store,
+        )
+        solution_path = save_solution_markdown(solution_md, artifacts_dir)
+        inserted = sum(i.get("insertion_status") == "inserted" for i in manifest["items"])
+        state_store.state.diagram_status = "completed" if all(i["status"] == "ok" and i.get("insertion_status") == "inserted" for i in manifest["items"]) else "partial"
+        log(f"Visualizations: {inserted} figures inserted")
+        state_store.mark_step("visualization", "completed")
+    except Exception as exc:
+        state_store.warn(f"visualization failed (prose retained): {exc}")
+        state_store.state.diagram_status = "failed"
+        state_store.mark_step("visualization", "failed")
     state_store.set_output("solution_md", solution_path)
     log(f"Solution: {solution_path} ({len(solution_md)} chars)")
 

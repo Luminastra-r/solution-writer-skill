@@ -117,6 +117,9 @@ def parse_input(payload: Dict[str, Any], args: argparse.Namespace) -> Dict[str, 
         "temperature": temperature,
         "max_web_results": max_web,
         "review_rewrite_limit": review_rewrite_limit,
+        "visualization": payload.get("visualization") or {},
+        "visualization_data": payload.get("visualization_data") or [],
+        "diagrams": payload.get("diagrams") or [],
     }
 
 

@@ -7,3 +7,4 @@ reportlab>=4.0.0
 rlPyCairo>=0.3.0
 pycairo>=1.26.0
 pillow>=10.0.0
+matplotlib>=3.6.0

@@ -10,11 +10,12 @@ import os
 import sys
 import argparse
 import re
+import json
 from datetime import datetime
 from pathlib import Path
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.enum.table import WD_ROW_HEIGHT_RULE
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
@@ -558,7 +559,16 @@ def add_image_to_doc(doc, image_abs_path, caption, figure_index):
     p.paragraph_format.space_before = Pt(12)
     p.paragraph_format.space_after = Pt(6)
     run = p.add_run()
-    run.add_picture(str(image_abs_path), width=Cm(15.5))
+    section = doc.sections[-1]
+    available = section.page_width - section.left_margin - section.right_margin
+    # Keep the original width unless margins or a tall image require a smaller size.
+    from PIL import Image
+    with Image.open(image_abs_path) as image:
+        ratio = image.height / image.width
+    height_limit = section.page_height - section.top_margin - section.bottom_margin - Cm(2.5)
+    width = min(Cm(15.5), available, int(height_limit / ratio))
+    run.add_picture(str(image_abs_path), width=width)
+    p.paragraph_format.keep_with_next = True
 
     caption_text = caption if caption else f"逻辑图{figure_index}"
     cp = doc.add_paragraph()
@@ -593,7 +603,8 @@ def add_table_to_doc(doc, table_data):
             p = cell.paragraphs[0]
             p.paragraph_format.space_before = Pt(4)
             p.paragraph_format.space_after = Pt(4)
-            p.paragraph_format.line_spacing = 1.3
+            p.paragraph_format.line_spacing = 1.2
+            p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
             p.paragraph_format.first_line_indent = Pt(0)
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
@@ -602,6 +613,18 @@ def add_table_to_doc(doc, table_data):
                 style_run(run, size=10.5, color=COLOR_WHITE, bold=True, cjk_font=FONT_CJK_HEAD)
             else:
                 style_run(run, size=10.5, color=COLOR_BODY)
+    set_table_line_spacing(table)
+
+
+def set_table_line_spacing(table):
+    """Only paragraph line spacing, including nested cells/multiple paragraphs."""
+    for row in table.rows:
+        for cell in row.cells:
+            for paragraph in cell.paragraphs:
+                paragraph.paragraph_format.line_spacing = 1.2
+                paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
+            for nested in cell.tables:
+                set_table_line_spacing(nested)
 
 
 def add_body_content(doc, content, input_base_dir):
@@ -612,6 +635,22 @@ def add_body_content(doc, content, input_base_dir):
     
     while i < len(lines):
         line = lines[i].rstrip()
+
+        if line.startswith("<!-- solution-source:") and line.endswith(" -->"):
+            try:
+                source = json.loads(line[len("<!-- solution-source:"):-4])
+                p = doc.add_paragraph()
+                p.paragraph_format.first_line_indent = Pt(0)
+                p.paragraph_format.space_before = Pt(0)
+                p.paragraph_format.space_after = Pt(6)
+                style_run(p.add_run("来源：" + source), size=9, color=COLOR_CAPTION)
+            except (ValueError, TypeError):
+                pass
+            i += 1
+            continue
+        if line.startswith("<!-- solution-") or line == "<!-- /solution-figure -->":
+            i += 1
+            continue
 
         # 检查是否是图片
         alt_text, image_path = parse_markdown_image(line)

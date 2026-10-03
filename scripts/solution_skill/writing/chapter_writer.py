@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Tuple
 from solution_skill.config import TARGET_LENGTH
 from solution_skill.text_utils import clean_chapter_body, normalize_text, shorten
 from solution_skill.research.research_pack_builder import build_research_context_text
+from solution_skill.visualization.planning import chapter_prompt, extract_tasks
 
 
 def _system_prompt() -> str:
@@ -43,6 +44,7 @@ def _sections_contract_text(sections: List[Dict[str, Any]]) -> str:
         goal = normalize_text(sec.get("section_goal", ""))
         brief = normalize_text(sec.get("content_brief", ""))
         lines.append(f"{i}. 小节标题：{title}")
+        lines.append(f"   稳定小节ID：{sec.get('id', '')}")
         if goal:
             lines.append(f"   本节要回答：{goal}")
         if brief:
@@ -103,6 +105,7 @@ def _user_prompt(
         "",
         "请直接输出本章正文（以“## " + chapter.title + "”作为章标题开头），"
         "不要输出任何前言、说明或“以下是正文”之类的话。",
+        chapter_prompt(request, blueprint, chapter),
     ])
 
 
@@ -126,6 +129,7 @@ def write_chapter(
     )
 
     status = "ok"
+    diagrams = []
     try:
         text = llm.generate(
             system_prompt=system_prompt,
@@ -136,6 +140,17 @@ def write_chapter(
             max_tokens=8192,
             cooldown_seconds=request.get("cooldown_seconds", 2),
         )
+        text, diagrams, diagram_errors = extract_tasks(text)
+        for error in diagram_errors:
+            state_store.warn(f"chapter {chapter.id} visualization metadata: {error}")
+        valid_tasks = []
+        for task in diagrams:
+            if isinstance(task, dict):
+                task["chapter_id"] = chapter.id
+                valid_tasks.append(task)
+            else:
+                state_store.warn(f"chapter {chapter.id}: non-object diagram skipped")
+        diagrams = valid_tasks
         body = clean_chapter_body(text, chapter.title)
     except Exception as exc:
         state_store.warn(f"chapter {chapter.id} failed: {exc}")
@@ -155,5 +170,6 @@ def write_chapter(
         "word_count": len(body),
         "status": status,
         "path": str(chapter_path),
+        "diagrams": diagrams,
     }
     return body, meta

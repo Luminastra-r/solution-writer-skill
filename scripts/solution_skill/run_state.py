@@ -17,7 +17,7 @@ class RunState:
     completed_sections: List[str] = field(default_factory=list)
     completed_chapters: List[str] = field(default_factory=list)
     failed_sections: List[str] = field(default_factory=list)
-    diagram_status: str = "removed"
+    diagram_status: str = "pending"
     docx_status: str = "pending"
     quality_status: str = "pending"
     llm_call_count: int = 0
@@ -56,7 +56,7 @@ class RunStateStore:
             completed_sections=payload.get("completed_sections", []) or [],
             completed_chapters=payload.get("completed_chapters", []) or [],
             failed_sections=payload.get("failed_sections", []) or [],
-            diagram_status=payload.get("diagram_status", "removed"),
+            diagram_status=payload.get("diagram_status", "pending"),
             docx_status=payload.get("docx_status", "pending"),
             quality_status=payload.get("quality_status", "pending"),
             llm_call_count=int(payload.get("llm_call_count", 0) or 0),

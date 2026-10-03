@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any, Dict, List
 
 from solution_skill.text_utils import normalize_text
@@ -21,8 +22,17 @@ def build_solution_markdown(
         if not body:
             body = f"## {chapter.title}\n\n（本章内容缺失）"
         # Ensure the chapter body starts with a heading
-        if not body.lstrip().startswith("#"):
+        if not body.lstrip().startswith("## "):
             body = f"## {chapter.title}\n\n{body}"
+        # Stable IDs are generated locally rather than trusting LLM heading IDs.
+        lines = body.splitlines()
+        for section in chapter.sections:
+            matches = [i for i, line in enumerate(lines)
+                       if re.sub(r"^#{3,6}\s+", "", line).strip() == section.get("title")
+                       and re.match(r"^#{3,6}\s+", line)]
+            if len(matches) == 1:
+                lines[matches[0]] = f"<!-- solution-section:{section['id']} -->\n" + lines[matches[0]]
+        body = f"<!-- solution-chapter:{chapter.id} -->\n" + "\n".join(lines)
         parts.append(body.strip() + "\n")
 
     return "\n".join(parts).strip() + "\n"

@@ -25,8 +25,8 @@ description: 面向 AI Agent 的长文解决方案写作技能。采用精简流
   - BM25-like 知识索引 + 类别加权
   - 客户洞察：把检索片段结构化为《客户洞察》，作为诊断与写作底座
 - 可视化逻辑图：
-  - agent 生成 SVG → 转 PNG → 嵌入 docx（见文末「可视化逻辑图」章节，主链路已支持）
-  - Mermaid 路线（`render_diagrams.py` / `inject_diagrams.py`）保留为独立模块，可选
+  - 现有蓝图/章节调用规划结构化绘图任务，合稿后自动渲染与嵌入 DOCX
+  - 流程/架构关系图（Mermaid，本地 SVG 降级）、数据图（Matplotlib）、业务模型（SVG 模板）
 
 ## 输入约束
 - 推荐只传 `raw_input`
@@ -68,7 +68,7 @@ description: 面向 AI Agent 的长文解决方案写作技能。采用精简流
 5. 1 次 LLM 生成 Solution Blueprint（诊断 + 目的导向大纲 + 每节内容概要契约）
 6. 按章写作（每章 1 次 LLM，逐条兑现 content_brief，显式对齐战略、措辞委婉）
 7. 合稿 Markdown
-8. 导出 DOCX
+8. 按需校验、渲染并嵌入图表，再导出 DOCX（本地处理，不增加 LLM 调用）
 9. 轻量终审（standard/high_quality：1 次 LLM 基于摘要审查）
 
 ### 关键调优点（对齐资深售前实操）
@@ -103,6 +103,8 @@ description: 面向 AI Agent 的长文解决方案写作技能。采用精简流
 - `requests`
 - `python-docx`
 - `cairosvg`（逻辑图 SVG→PNG；不可用时回退 `svglib`+`reportlab`）
+- `matplotlib`（数据图；中文字体使用现有思源宋体，或系统 CJK 字体）
+- Mermaid CLI 为可选本地依赖；缺失时用受控 SVG 模板，不自动发送业务数据到第三方
 
 ## 运行建议
 ```bash
@@ -129,40 +131,20 @@ DOCX 导出（`generate_docx.py`，orchestrator 亦复用）统一遵循以下�
 - 封面：左对齐垂直流 + **双大圆水印背景**（`scripts/assets/cover_bg_a4.png`：右上深海蓝 ~5% + 左下活力橙 ~4%，A4 透明 PNG，以浮动图 `behindDoc=1` 锚定页面铺满整页）。文字节奏：短深海蓝细条(1.27cm×1.5pt) → 字距拉开的深海蓝 13pt 类型标签 → **40pt** 墨黑衬线大标题(行距1.2) → 短深海蓝细条 → **16pt 深灰 #4A4A4A** 摘要段(行距1.7) → **11pt 钢灰 #6F7679** 元数据（年月 + 机构各一行）
 - 目录页：居中墨黑"目 录"，**无分隔线**；页脚居中浅灰页码
 - 版式：**A4**（21.0×29.7cm）；四边距 2.54cm；正文 1.75 倍行距、段前后各 0.5 行、两端对齐、首行缩进 2字符
-- 表格：表头 #204B8C 底白字加粗居中，数据行居中，顶/底深蓝线 + 行间浅灰横线，无竖线
+- 表格：表头 #204B8C 底白字加粗居中，数据行居中，顶/底深蓝线 + 行间浅灰横线，无竖线；普通单元格段落为 Word **1.2 倍**行距
 - 强调：正文 `**加粗**` 会转为真正加粗（写作侧仅允许关键数值/结论词，单段≤2 处）
 - 封面可选参数：`--subtitle`（元数据机构行，默认客户名）/ `--doctype`（类型标签）/ `--abstract`（摘要段）
 
-## 可视化逻辑图（内置 Visualizer + 文档嵌入）
+## 自动可视化与文档嵌入
 
-当方案内容出现以下任一情形时，生成逻辑图：
-- 多方/多角色关系（如签约结构、职责划分、系统对接）
-- 流程/步骤链（如办理流程、审批流、数据流向）
-- 对比或架构呈现（如方案选型、模块划分）
+在原有蓝图 JSON 的章节中添加可选 `visualization_goals`，写作时按实际内容确认图表；正文后追加 `visualizations` JSON 代码块，脚本提取后不会进入正文。任务结构、数据来源约束和配置见 [visualization.md](references/visualization.md)。
 
-生成与嵌入流程（每张图执行一次）：
-1. 调 read_me(modules=["diagram"]) 加载设计系统，严格遵守其返回的规则。
-2. 生成 SVG 字符串，写入本地文件 assets/diagram_<序号>.svg（viewBox 固定 "0 0 680 H"，扁平纯色填充，单图≤2 个色系，字号 13–15px，禁用渐变/阴影/emoji，节点文字 dominant-baseline="central"，并含 <title>/<desc>）。
-3. 调 show_widget(title=..., widget_code=<该SVG>, loading_messages=[...]) 做内联预览。
-4. 用 cairosvg 把 SVG 转成 assets/diagram_<序号>.png（output_width=1200 保证清晰）。
-5. 在方案文档的"## 逻辑图"小节（若该小节不存在则在对应结构段落后新建）用 python-docx 的 add_picture 嵌入 PNG，宽度约 6 英寸；随后保存 docx。
-6. 图只承载结构，所有说明文字写在正文（图外）。
+图表必须有实质信息价值。多方协作、服务流程、系统连接、业务分层适合逻辑图；真实数值比较可用数据图。通常 3–6 张，默认上限 8 张，可配置；不按固定标题或每章凑图，同一小节可多图。正文解释原因与措施，图表表达结构或比较，避免重复表达相同信息。
 
-确定性约定：若方案模板含"## 架构与关系 / ## 逻辑图"小节，默认在该节必出一张结构图；其余情形按上面触发规则判断。
+数据图仅引用用户配置的数据集，或逐点提取用户输入/研究条目中的原文数值。区分 `verified`、`user_provided`、`assumed`；假设默认禁用，显式启用仍须标注，不能宣称实际经营成效。缺少可靠数值时改用逻辑图或跳过。
 
-### 本 skill 的落地约定（与主链路对齐）
+主链路在合稿后、导出前执行 `solution_skill.visualization`：验证结构与正文对应关系 → 本地渲染 SVG + 高清 PNG → 按稳定章节/小节 ID 或唯一内容锚点插入 → 导出 DOCX。图片采用克制的 A/B/C 主题，配置与色值见 [可视化规范](references/visualization.md)。文档级 `visualization.theme` 为 `auto/sage/tech`：运营体系优先鼠尾草绿与暖米白，科技平台优先科技蓝与浅青白；同一文档默认统一主主题，单图可显式覆盖。统计图统一采用青绿与陶土棕，使用线型、标记、图例区分系列。默认 `gradient_mode: solid`；显式 `controlled` 只对SVG展示图小面积强调线启用柔和同色系渐变，Mermaid与统计图保持纯色。完整Word页面未验证时，不宣称渐变全链路通过。图表使用可用中文无衬线字体，Word字体和配色保持原样。标准宽度不超过15.5cm，超高图自动适应正文页面；复杂内容应拆图以保证最终字号。Manifest记录主题、状态、位置、来源、错误及重试次数；绘图失败保留正文与DOCX导出，重复运行替换已有生成块。
 
-- 图文件统一放 `artifacts/diagrams/`（即上文的 `assets/`）：`diagram_01.svg` / `diagram_01.png`。
-- 转 PNG 优先用工具脚本，自动处理回退：
-  `python scripts/svg_to_png.py artifacts/diagrams/diagram_01.svg`（cairosvg 优先，失败自动回退 svglib，输出同名 .png，宽 1200px）。
-  脚本内置中文字体处理：自动注册系统可用的 CJK 字体（SimHei/雅黑/Noto 等）并注入 SVG 文本，无需在 SVG 中指定 font-family。
-- 嵌入方式：在 `artifacts/solution.md` 对应小节后直接插入一行 Markdown 图片引用，例如
-  `![总体架构逻辑图](diagrams/diagram_01.png)`，
-  随后走既有导出管线（`export_docx` / `generate_docx.py`）即自动嵌入 docx（图宽 15.5cm ≈ 6 英寸，自动编号图题"图N"），无需手写 add_picture。
-- 时序：所有图在"合稿 Markdown 之后、导出 DOCX 之前"完成生成与插入。
+较复杂关系先由 LLM 规划概览与子图；本地还可按完整边集合拆分，跨图同名节点表示同一对象，不静默丢节点/关系。预算不足以容纳全部分图时跳过该组并记录原因。Mermaid CLI 缺失时离线 SVG 路径可处理每图至多10节点/12边；复杂分组结构需安装本地 Mermaid CLI，否则跳过并保留正文。
 
-### 跨平台兼容（非 WorkBuddy 环境）
-
-- `read_me` / `show_widget` 是 WorkBuddy 平台工具，仅用于加载设计规范与聊天内预览，**不影响产出物**。
-- 在其他 agent 平台使用时：跳过第 1、3 步，直接按第 2 步的 SVG 规范手写 SVG 落盘，再执行第 4、5 步即可，最终 docx 效果一致。
-- SVG 设计规范（无 read_me 可用时按此执行）：浅色背景（white/transparent）、深色文字；viewBox "0 0 680 H"；扁平纯色填充，单图 ≤2 个色系；字号 13–15px；禁用渐变/阴影/滤镜/emoji；节点文字 `dominant-baseline="central"`；根元素含 `<title>` 与 `<desc>`；箭头用 `<marker>` 定义。
+保留原有 `render_diagrams.py`、`inject_diagrams.py`、`svg_to_png.py` 命令。`--engine auto` 默认优先本地 Mermaid，缺失或失败使用 SVG；`--engine kroki --kroki-url ...` 仅在显式指定时发送图内容。人工 SVG→PNG→Markdown 图片→DOCX 的原有路径仍可使用，但不要直接执行 LLM 生成的 Python 绘图代码。

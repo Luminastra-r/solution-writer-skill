@@ -14,6 +14,7 @@ Also supports a "staged" (阶段递进) framework (合作初稿 -> 调研诊断�
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -27,6 +28,7 @@ from solution_skill.config import (
 from solution_skill.json_utils import repair_json
 from solution_skill.text_utils import normalize_text, shorten
 from solution_skill.research.research_pack_builder import build_research_context_text
+from solution_skill.visualization.planning import blueprint_prompt
 
 
 def _blueprint_system_prompt() -> str:
@@ -83,6 +85,7 @@ def _blueprint_user_prompt(
         "强调具体可落地、指标注明测量方法、正文为连贯段落而非提纲）。",
         "",
         "【输出 JSON 结构】",
+        blueprint_prompt(request),
         json.dumps({
             "title": "方案标题",
             "target_length": target_length,
@@ -234,15 +237,22 @@ def generate_blueprint(
 
 def _normalize_blueprint_ids(blueprint: Dict[str, Any]) -> None:
     """Ensure chapters/sections have stable ids and required contract fields."""
+    seen = set()
     for c_idx, chapter in enumerate(blueprint.get("chapters", []), start=1):
-        if not chapter.get("id"):
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", str(chapter.get("id", ""))) or chapter["id"] in seen:
             chapter["id"] = f"ch{c_idx:02d}"
+        while chapter["id"] in seen:
+            chapter["id"] += "_c"
+        seen.add(chapter["id"])
         chapter.setdefault("chapter_goal", "")
         chapter.setdefault("suggested_words", 2000)
         sections = chapter.get("sections") or []
         for s_idx, section in enumerate(sections, start=1):
-            if not section.get("id"):
+            if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", str(section.get("id", ""))) or section["id"] in seen:
                 section["id"] = f"{chapter['id']}_s{s_idx}"
+            while section["id"] in seen:
+                section["id"] += "_s"
+            seen.add(section["id"])
             section.setdefault("section_goal", "")
             section.setdefault("content_brief", "")
 

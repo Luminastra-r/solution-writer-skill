@@ -126,13 +126,35 @@ def convert_with_svglib(svg_path: Path, png_path: Path, width: int) -> None:
     drawing.width *= scale
     drawing.height *= scale
     drawing.scale(scale, scale)
-    renderPM.drawToFile(drawing, str(png_path), fmt="PNG", dpi=96)
+    # drawing already has the requested pixel dimensions; 96 DPI rescales by 4/3.
+    renderPM.drawToFile(drawing, str(png_path), fmt="PNG", dpi=72)
 
 
 ENGINES = [
     ("cairosvg", convert_with_cairosvg),
     ("svglib", convert_with_svglib),
 ]
+
+
+def convert_svg(svg_path: Path, png_path: Path, width: int = 1800) -> str:
+    """Reusable local conversion with the same fallback policy as the CLI."""
+    png_path.parent.mkdir(parents=True, exist_ok=True)
+    import xml.etree.ElementTree as ET
+    if ET.parse(svg_path).getroot().get("data-sw-gradient-mode") == "controlled":
+        from solution_skill.visualization.theme import convert_themed_svg
+        return "; ".join(convert_themed_svg(svg_path, png_path, width))
+    errors = []
+    for name, func in ENGINES:
+        try:
+            func(svg_path, png_path, width)
+            from PIL import Image
+            with Image.open(png_path) as img:
+                img.verify()
+            return name
+        except Exception as exc:
+            png_path.unlink(missing_ok=True)
+            errors.append(f"[{name}] {exc}")
+    raise RuntimeError("; ".join(errors))
 
 
 def main() -> int:
@@ -149,19 +171,13 @@ def main() -> int:
     png_path = Path(args.output) if args.output else svg_path.with_suffix(".png")
     png_path.parent.mkdir(parents=True, exist_ok=True)
 
-    errors = []
-    for name, func in ENGINES:
-        try:
-            func(svg_path, png_path, args.width)
-            print(f"OK [{name}] {svg_path} -> {png_path} (width={args.width}px)")
-            return 0
-        except Exception as e:  # try next engine
-            errors.append(f"[{name}] {e}")
-
-    print("All engines failed:")
-    for err in errors:
-        print(f"  {err}")
-    return 1
+    try:
+        engine = convert_svg(svg_path, png_path, args.width)
+        print(f"OK [{engine}] {svg_path} -> {png_path} (width={args.width}px)")
+        return 0
+    except Exception as exc:
+        print(f"All engines failed: {exc}")
+        return 1
 
 
 if __name__ == "__main__":
